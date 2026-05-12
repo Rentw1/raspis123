@@ -95,7 +95,7 @@ def run_scheduler():
     """Фоновый цикл для проверки времени"""
     # Настраиваем время (Railway обычно работает по UTC, проверьте часовой пояс!)
     # Если в Москве 6:00, а сервер в UTC, ставим 03:00
-    schedule.every().day.at("06:00").do(send_morning_schedule)
+    schedule.every().day.at("03:00").do(send_morning_schedule)
     
     while True:
         schedule.run_pending()
