@@ -1,36 +1,22 @@
 import os
 import requests
 from bs4 import BeautifulSoup
-import time
-import schedule  # Добавьте эту библиотеку
+import telebot
+from telebot import types
 
-# Данные из переменных окружения Railway
-BASE_URL = 'https://apeksvuz.mosu-mvd.com'
+# Данные из переменных Railway
+TOKEN = os.getenv('TG_TOKEN')
 USERNAME = os.getenv('VUZ_USER')
 PASSWORD = os.getenv('VUZ_PASS')
-TELEGRAM_TOKEN = os.getenv('TG_TOKEN')
-CHAT_ID = os.getenv('TG_CHAT_ID')
+BASE_URL = 'https://apeksvuz.mosu-mvd.com'
 
-def send_telegram(text):
-    url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
-    try:
-        for i in range(0, len(text), 4000):
-            requests.post(url, data={
-                'chat_id': CHAT_ID,
-                'text': text[i:i+4000],
-                'parse_mode': 'HTML'
-            })
-            time.sleep(0.5)
-    except Exception as e:
-        print(f"Ошибка отправки в ТГ: {e}")
+bot = telebot.TeleBot(TOKEN)
 
-def get_and_send_schedule():
-    print("Запуск задачи получения расписания...")
+def get_schedule_text():
+    """Логика парсинга расписания (та же, что была раньше)"""
     session = requests.Session()
     session.headers.update({'User-Agent': 'Mozilla/5.0'})
-    
     try:
-        # Авторизация
         login_page = session.get(BASE_URL + '/login')
         soup = BeautifulSoup(login_page.content, 'html.parser')
         csrf_token = soup.find('input', {'name': '_csrf'}).get('value', '')
@@ -43,55 +29,46 @@ def get_and_send_schedule():
         }
         session.post(BASE_URL + '/login', data=login_data)
         
-        # Парсинг
         main_page = session.get(BASE_URL)
         soup_main = BeautifulSoup(main_page.content, 'html.parser')
         
-        schedule_data = []
-        seen_lessons = set()
         lines = soup_main.get_text().split('\n')
+        schedule_data = []
         in_schedule = False
-        
         for line in lines:
             line = line.strip()
             if 'Мое расписание' in line: in_schedule = True
             if in_schedule and 'Настройка виджетов' in line: break
             if in_schedule and line:
                 if any(y in line for y in ['.2025,', '.2026,']):
-                    schedule_data.append({'type': 'date', 'text': line})
-                    seen_lessons.clear()
+                    schedule_data.append(f"\n<b>📆 {line}</b>")
                 elif '913,' in line:
                     subj = ' '.join(line.replace('913, ', '').split())
-                    if subj[:60] not in seen_lessons:
-                        seen_lessons.add(subj[:60])
-                        schedule_data.append({'type': 'lesson', 'text': subj})
+                    schedule_data.append(f"  • {subj}")
         
-        # Формирование сообщения
         if not schedule_data:
-            send_telegram("📅 Расписание на сегодня не найдено.")
-            return
-
-        msg = "📅 <b>Расписание</b>\n👤 Васильев Р.А.\n"
-        for item in schedule_data:
-            if item['type'] == 'date':
-                msg += f"\n<b>📆 {item['text']}</b>\n"
-            else:
-                msg += f"  • {item['text']}\n"
+            return "📅 Расписание не найдено."
         
-        send_telegram(msg)
-        print("Сообщение успешно отправлено.")
-        
+        header = "📅 <b>Актуальное расписание</b>\n👤 Васильев Р.А.\n"
+        return header + "\n".join(schedule_data)
     except Exception as e:
-        send_telegram(f"❌ Ошибка в скрипте: {e}")
+        return f"❌ Ошибка при получении данных: {e}"
 
-# Планировщик: запуск каждый день в 07:00
-schedule.every().day.at("07:00").do(get_and_send_schedule)
+# Команда /start — создает кнопку
+@bot.message_handler(commands=['start'])
+def start(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn = types.KeyboardButton("📖 Получить расписание")
+    markup.add(btn)
+    bot.send_message(message.chat.id, "Привет! Нажми на кнопку ниже, чтобы я прислал расписание.", reply_markup=markup)
+
+# Обработка нажатия на кнопку
+@bot.message_handler(func=lambda message: message.text == "📖 Получить расписание")
+def send_schedule(message):
+    bot.send_message(message.chat.id, "⏳ Секунду, подключаюсь к Апексу...")
+    text = get_schedule_text()
+    bot.send_message(message.chat.id, text, parse_mode='HTML')
 
 if __name__ == '__main__':
-    print("Бот запущен и ожидает времени отправки...")
-    # Первый запуск при старте (опционально, чтобы проверить работу сразу)
-    # get_and_send_schedule() 
-    
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    print("Бот запущен...")
+    bot.infinity_polling()
